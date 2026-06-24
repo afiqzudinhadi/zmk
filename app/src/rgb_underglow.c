@@ -254,6 +254,7 @@ static void zmk_led_write_pixels(void) {
     // battery below minimum charge
     if (bat0 < 10) {
         memset(pixels, 0, sizeof(struct led_rgb) * STRIP_NUM_PIXELS);
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
         if (state.on) {
             int c_power = ext_power_get(ext_power);
             if (c_power && !state.status_active) {
@@ -262,6 +263,7 @@ static void zmk_led_write_pixels(void) {
                 reset_ext_power = true;
             }
         }
+#endif
     }
 
     if (blend == 0) {
