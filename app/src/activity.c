@@ -16,7 +16,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/event_manager.h>
 #include <zmk/events/activity_state_changed.h>
 #include <zmk/events/position_state_changed.h>
+#if IS_ENABLED(CONFIG_ZMK_SPLIT)
 #include <zmk/events/split_peripheral_layer_changed.h>
+#endif
 #include <zmk/events/sensor_event.h>
 
 #include <zmk/pm.h>
@@ -110,7 +112,9 @@ static int activity_init(void) {
 ZMK_LISTENER(activity, activity_event_listener);
 ZMK_SUBSCRIPTION(activity, zmk_position_state_changed);
 ZMK_SUBSCRIPTION(activity, zmk_sensor_event);
+#if IS_ENABLED(CONFIG_ZMK_SPLIT)
 ZMK_SUBSCRIPTION(activity, zmk_split_peripheral_layer_changed);
+#endif
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
 
