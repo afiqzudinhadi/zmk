@@ -212,20 +212,8 @@ static void zmk_rgb_underglow_effect_swirl(void) {
 }
 
 static void zmk_rgb_underglow_effect_layer(void) {
-    bool active = false;
-    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        pixels[i].r -= state.animation_speed < pixels[i].r ? state.animation_speed : pixels[i].r;
-        pixels[i].g -= state.animation_speed < pixels[i].g ? state.animation_speed : pixels[i].g;
-        pixels[i].b -= state.animation_speed < pixels[i].b ? state.animation_speed : pixels[i].b;
-        if (pixels[i].r || pixels[i].g || pixels[i].b) {
-            active = true;
-        }
-    }
-    state.animation_step += state.animation_speed;
-
-    if (state.animation_step > 255 || !active) {
-        zmk_rgb_underglow_transient_off();
-    }
+    // Layer indicator colors are static — set by set_layer() on layer change.
+    // No per-frame animation needed.
 }
 
 static int zmk_led_generate_status(void);
