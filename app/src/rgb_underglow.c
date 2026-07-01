@@ -67,6 +67,7 @@ struct rgb_underglow_state {
     uint16_t animation_step;
     bool on;
     bool status_active;
+    bool layer_enabled;
     uint16_t status_animation_step;
 };
 
@@ -192,10 +193,11 @@ static void effect_swirl_render(struct zmk_rgb_effect_ctx *ctx) {
     *ctx->animation_step = *ctx->animation_step % HUE_MAX;
 }
 
-ZMK_RGB_EFFECT_DEFINE(effect_solid, "Solid", effect_solid_render, 0, NULL, NULL);
-ZMK_RGB_EFFECT_DEFINE(effect_breathe, "Breathe", effect_breathe_render, 0, NULL, NULL);
-ZMK_RGB_EFFECT_DEFINE(effect_spectrum, "Spectrum", effect_spectrum_render, 0, NULL, NULL);
-ZMK_RGB_EFFECT_DEFINE(effect_swirl, "Swirl", effect_swirl_render, 0, NULL, NULL);
+ZMK_RGB_EFFECT_DEFINE(effect_solid, "Solid", effect_solid_render, 0, NULL, NULL, NULL, NULL);
+ZMK_RGB_EFFECT_DEFINE(effect_breathe, "Breathe", effect_breathe_render, 0, NULL, NULL, NULL, NULL);
+ZMK_RGB_EFFECT_DEFINE(effect_spectrum, "Spectrum", effect_spectrum_render, 0, NULL, NULL, NULL,
+                      NULL);
+ZMK_RGB_EFFECT_DEFINE(effect_swirl, "Swirl", effect_swirl_render, 0, NULL, NULL, NULL, NULL);
 
 /* --- Effect registry helpers --- */
 
@@ -213,6 +215,11 @@ static struct zmk_rgb_effect *zmk_rgb_effect_get(int index) {
     struct zmk_rgb_effect *effect;
     STRUCT_SECTION_GET(zmk_rgb_effect, index, &effect);
     return effect;
+}
+
+static bool zmk_rgb_effect_is_persistent(void) {
+    struct zmk_rgb_effect *effect = zmk_rgb_effect_get(state.current_effect);
+    return effect && (effect->flags & ZMK_RGB_EFFECT_PERSISTENT);
 }
 
 /* --- Status indicator overlay (separate from effects) --- */
@@ -462,7 +469,7 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
 K_WORK_DEFINE(underglow_tick_work, zmk_rgb_underglow_tick);
 
 static void zmk_rgb_underglow_tick_handler(struct k_timer *timer) {
-    if (!state.on) {
+    if (!state.on && !state.layer_enabled) {
         return;
     }
 
@@ -471,8 +478,28 @@ static void zmk_rgb_underglow_tick_handler(struct k_timer *timer) {
 
 K_TIMER_DEFINE(underglow_tick, zmk_rgb_underglow_tick_handler, NULL);
 
+bool zmk_rgb_is_on(void) { return state.on; }
+
 void zmk_rgb_request_refresh(void) {
     k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_tick_work);
+}
+
+void zmk_rgb_request_refresh_wakeup(bool wakeup) {
+    if (!state.on && !state.layer_enabled) {
+        if (!wakeup) {
+            return;
+        }
+        zmk_rgb_underglow_transient_on();
+    }
+    zmk_rgb_request_refresh();
+}
+
+void zmk_rgb_set_tick_delay(int delay_seconds) {
+    k_timer_stop(&underglow_tick);
+    state.animation_step = 0;
+    if (delay_seconds >= 0) {
+        k_timer_start(&underglow_tick, K_SECONDS(delay_seconds), K_MSEC(50));
+    }
 }
 
 /* --- Settings persistence --- */
@@ -494,6 +521,12 @@ static int rgb_settings_set(const char *name, size_t len, settings_read_cb read_
             }
             if (state.on) {
                 k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
+            }
+            if (state.layer_enabled) {
+                struct zmk_rgb_effect *effect = zmk_rgb_effect_get(state.current_effect);
+                if (effect && effect->on_select) {
+                    effect->on_select();
+                }
             }
             return 0;
         }
@@ -555,6 +588,12 @@ static int zmk_rgb_underglow_init(void) {
             k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(25));
         }
     }
+    if (state.layer_enabled) {
+        struct zmk_rgb_effect *effect = zmk_rgb_effect_get(state.current_effect);
+        if (effect && effect->on_select) {
+            effect->on_select();
+        }
+    }
 
     return 0;
 }
@@ -572,7 +611,7 @@ int zmk_rgb_underglow_get_state(bool *on_off) {
     if (!led_strip)
         return -ENODEV;
 
-    *on_off = state.on;
+    *on_off = state.on || state.layer_enabled;
     return 0;
 }
 
@@ -611,6 +650,10 @@ void zmk_rgb_set_ext_power(void) {
 
 int zmk_rgb_underglow_on(void) {
     zmk_rgb_underglow_transient_on();
+    if (zmk_rgb_effect_is_persistent()) {
+        state.layer_enabled = true;
+        memset(pixels, 0, sizeof(struct led_rgb) * STRIP_NUM_PIXELS);
+    }
     return zmk_rgb_underglow_save_state();
 }
 
@@ -647,17 +690,13 @@ K_WORK_DEFINE(underglow_off_work, zmk_rgb_underglow_off_handler);
 
 int zmk_rgb_underglow_off(void) {
     zmk_rgb_underglow_transient_off();
+    state.layer_enabled = false;
     return zmk_rgb_underglow_save_state();
 }
 
 int zmk_rgb_underglow_transient_off(void) {
     if (!led_strip)
         return -ENODEV;
-
-    struct zmk_rgb_effect *effect = zmk_rgb_effect_get(state.current_effect);
-    if (effect && effect->on_deselect) {
-        effect->on_deselect();
-    }
 
     k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
 
@@ -684,6 +723,8 @@ int zmk_rgb_underglow_select_effect(int effect) {
         return -EINVAL;
     }
 
+    bool was_persistent = zmk_rgb_effect_is_persistent();
+
     struct zmk_rgb_effect *old_eff = zmk_rgb_effect_get(state.current_effect);
     if (old_eff && old_eff->on_deselect) {
         old_eff->on_deselect();
@@ -693,16 +734,26 @@ int zmk_rgb_underglow_select_effect(int effect) {
     state.animation_step = 0;
 
     struct zmk_rgb_effect *new_eff = zmk_rgb_effect_get(state.current_effect);
+
+    state.layer_enabled = (new_eff && (new_eff->flags & ZMK_RGB_EFFECT_PERSISTENT));
+
     if (new_eff && new_eff->on_select) {
         new_eff->on_select();
     }
 
     if (state.on) {
-        if (new_eff && (new_eff->flags & ZMK_RGB_EFFECT_STATIC)) {
+        if (state.layer_enabled) {
+            memset(pixels, 0, sizeof(struct led_rgb) * STRIP_NUM_PIXELS);
+            zmk_rgb_request_refresh();
+        } else if (new_eff && (new_eff->flags & ZMK_RGB_EFFECT_STATIC)) {
             k_timer_stop(&underglow_tick);
             zmk_rgb_request_refresh();
         } else {
-            k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(25));
+            if (was_persistent && !state.layer_enabled) {
+                k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(25));
+            } else {
+                k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(25));
+            }
         }
     }
 
@@ -870,6 +921,11 @@ static int rgb_underglow_auto_state(bool target_wake_state) {
     sleep_state.is_awake = target_wake_state;
 
     if (sleep_state.is_awake) {
+        struct zmk_rgb_effect *effect = zmk_rgb_effect_get(state.current_effect);
+        if (effect && effect->on_idle) {
+            effect->on_idle(true);
+            return 0;
+        }
         if (sleep_state.rgb_state_before_sleeping) {
             return zmk_rgb_underglow_transient_on();
         } else {
@@ -877,6 +933,11 @@ static int rgb_underglow_auto_state(bool target_wake_state) {
         }
     } else {
         sleep_state.rgb_state_before_sleeping = state.on;
+        struct zmk_rgb_effect *effect = zmk_rgb_effect_get(state.current_effect);
+        if (effect && effect->on_idle) {
+            effect->on_idle(false);
+            return 0;
+        }
         return zmk_rgb_underglow_transient_off();
     }
 }
