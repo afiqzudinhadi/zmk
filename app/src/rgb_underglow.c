@@ -486,6 +486,9 @@ void zmk_rgb_request_refresh(void) {
 
 void zmk_rgb_request_refresh_wakeup(bool wakeup) {
     if (!state.on && !state.layer_enabled) {
+        return;
+    }
+    if (!state.on && state.layer_enabled) {
         if (!wakeup) {
             return;
         }
