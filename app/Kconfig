@@ -322,8 +322,8 @@ config ZMK_RGB_UNDERGLOW_SPD_START
     range 1 5
 
 config ZMK_RGB_UNDERGLOW_EFF_START
-    int "RGB underglow start effect int value related to the effect enum list"
-    range 0 4
+    int "RGB underglow start effect index (clamped to available effects at runtime)"
+    range 0 15
 
 config ZMK_RGB_UNDERGLOW_ON_START
     bool "RGB underglow starts on by default"
@@ -334,10 +334,6 @@ config ZMK_RGB_UNDERGLOW_AUTO_OFF_IDLE
 config ZMK_RGB_UNDERGLOW_AUTO_OFF_USB
     bool "Turn off RGB underglow when USB is disconnected"
     depends on USB_DEVICE_STACK
-
-config EXPERIMENTAL_RGB_LAYER
-    bool "Experimental per-key per-layer RGB underglow"
-    default n
 
 endif # ZMK_RGB_UNDERGLOW
 
